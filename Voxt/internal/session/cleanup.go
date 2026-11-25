@@ -222,6 +222,7 @@ func (r *run) cleanTranscribe(text string, generation uint64) cleanupOutput {
 	if r.cleanupMayContinue() {
 		output = r.cleanUpFirst(text)
 	}
+	r.head.drop() // what is asked again is asked anew
 	for {
 		if request, ok := r.takeRethink(); ok {
 			generation = request.generation
@@ -263,6 +264,10 @@ func (r *run) cleanTranscribe(text string, generation uint64) cleanupOutput {
 // end of the cleaned text before it (liveContext), after the last sentences
 // of that text that are asked again (redo).
 func (r *run) cleanUpFirst(text string) cleanupOutput {
+	if r.head.enabled && r.earlyCleanup().working() {
+		// The tail does not wait for the stretch under way.
+		r.head.send(text)
+	}
 	parts, answers, tail, failed, completedAt, ok := r.earlyCleanup().drain(text)
 	before := ""
 	if !ok {
@@ -353,6 +358,9 @@ func (r *run) cleanParts(text string, parts []compose.Part, answers []string, th
 }
 
 func (r *run) cleanPartsContext(text string, parts []compose.Part, answers []string, think *llm.Thinking, ctx context.Context) (string, string, error) {
+	if len(parts)-len(answers) > 1 && r.svc.LLMInfo.Remote && !r.m.resting(r.svc.LLMInfo.ID) {
+		return r.cleanPartsTogether(text, parts, answers, think, ctx)
+	}
 	var failed error
 	for i := len(answers); i < len(parts); i++ {
 		p := parts[i]
@@ -360,8 +368,7 @@ func (r *run) cleanPartsContext(text string, parts []compose.Part, answers []str
 			return text, p.Profile(), context.DeadlineExceeded
 		}
 		draft := newDrafter(r, ctx, parts[:i+1], answers)
-		req := llm.Request{Messages: llmMessages(p.Output), Skill: llm.SkillTranscribeEnhance, Thinking: think, InputChars: utf8.RuneCountInString(text), OnDelta: draft.add}
-		resp, err := r.llmChatContext(ctx, r.m.cfg.llmDeadlines(req, utf8.RuneCountInString(p.Text), r.llmFloor(r.m.cfg.LLMTimeout)))
+		resp, err := r.askPart(ctx, r.partRequest(text, p, think, draft.add), p.Text)
 		switch {
 		case r.ctx.Err() != nil || r.skipped.Load() || r.rethink.Load():
 			return text, p.Profile(), err
