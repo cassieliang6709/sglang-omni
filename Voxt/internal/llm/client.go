@@ -94,6 +94,14 @@ func (c *Client) Prefill(ctx context.Context, req Request) error {
 	return nil
 }
 
+// Connect passes to the backend when it is a Connector; nil otherwise.
+func (c *Client) Connect(ctx context.Context) error {
+	if b, ok := c.Backend.(Connector); ok {
+		return b.Connect(ctx)
+	}
+	return nil
+}
+
 // Chat runs req with retries. A streaming request is retried only while
 // nothing has been streamed yet. The returned Usage sums every attempt.
 func (c *Client) Chat(ctx context.Context, req Request) (Response, error) {
